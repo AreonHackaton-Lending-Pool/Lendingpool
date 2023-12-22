@@ -1,0 +1,155 @@
+{
+	"compiler": {
+		"version": "0.8.23+commit.f704f362"
+	},
+	"language": "Solidity",
+	"output": {
+		"abi": [
+			{
+				"anonymous": false,
+				"inputs": [
+					{
+						"indexed": false,
+						"internalType": "address",
+						"name": "poolAddress",
+						"type": "address"
+					}
+				],
+				"name": "PoolIsCreated",
+				"type": "event"
+			},
+			{
+				"inputs": [
+					{
+						"internalType": "uint256",
+						"name": "",
+						"type": "uint256"
+					}
+				],
+				"name": "assets",
+				"outputs": [
+					{
+						"internalType": "string",
+						"name": "",
+						"type": "string"
+					}
+				],
+				"stateMutability": "view",
+				"type": "function"
+			},
+			{
+				"inputs": [
+					{
+						"internalType": "string",
+						"name": "tokenSymbol",
+						"type": "string"
+					},
+					{
+						"internalType": "address",
+						"name": "tokenAddress",
+						"type": "address"
+					}
+				],
+				"name": "createPool",
+				"outputs": [],
+				"stateMutability": "nonpayable",
+				"type": "function"
+			},
+			{
+				"inputs": [],
+				"name": "getAllAssets",
+				"outputs": [
+					{
+						"internalType": "string[]",
+						"name": "",
+						"type": "string[]"
+					}
+				],
+				"stateMutability": "view",
+				"type": "function"
+			},
+			{
+				"inputs": [
+					{
+						"internalType": "string",
+						"name": "tokenSymbol",
+						"type": "string"
+					}
+				],
+				"name": "getPoolAddressForToken",
+				"outputs": [
+					{
+						"internalType": "address",
+						"name": "",
+						"type": "address"
+					}
+				],
+				"stateMutability": "view",
+				"type": "function"
+			},
+			{
+				"inputs": [
+					{
+						"internalType": "string",
+						"name": "",
+						"type": "string"
+					}
+				],
+				"name": "poolData",
+				"outputs": [
+					{
+						"internalType": "address",
+						"name": "",
+						"type": "address"
+					}
+				],
+				"stateMutability": "view",
+				"type": "function"
+			}
+		],
+		"devdoc": {
+			"kind": "dev",
+			"methods": {},
+			"version": 1
+		},
+		"userdoc": {
+			"kind": "user",
+			"methods": {},
+			"version": 1
+		}
+	},
+	"settings": {
+		"compilationTarget": {
+			"pool/Lendingmarket.sol": "LendingMarket"
+		},
+		"evmVersion": "shanghai",
+		"libraries": {},
+		"metadata": {
+			"bytecodeHash": "ipfs"
+		},
+		"optimizer": {
+			"enabled": false,
+			"runs": 200
+		},
+		"remappings": []
+	},
+	"sources": {
+		"pool/Lendingmarket.sol": {
+			"keccak256": "0xa372edbdbe9975deeadd490aa0dc515478fe3a672ca88f643d0f744199c3053f",
+			"license": "MIT",
+			"urls": [
+				"bzz-raw://dc67667b04264e1eb456f88566c07d8ada1f4bb7179b5272a02aa5b8898f0da7",
+				"dweb:/ipfs/QmNvHdFr3SAh1UGgBu9eMFzsPtg3mnxNXq8WJPjJCmaaup"
+			]
+		},
+		"pool/Pool.sol": {
+			"keccak256": "0xea1c58f37013f6af442c994deead6b6dfe22fa03b46584dc25a5f2ac28cdb7f4",
+			"license": "MIT",
+			"urls": [
+				"bzz-raw://d83a1ace44c69c5b95b547ca85cba1953a7975449b3036cdfde3104e45f29969",
+				"dweb:/ipfs/QmQL8ogiHR7gP2u1uy74cAG6zp7oZjoMPLLYkgUqvEcf6g"
+			]
+		}
+	},
+	"version": 1
+}
