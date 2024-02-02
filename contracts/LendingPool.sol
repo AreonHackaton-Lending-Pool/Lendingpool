@@ -1,128 +1,136 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-contract BankDeposit {
-    address private ownerBank;
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/interfaces/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+
+contract LendingPool {
+
+    address public tokenAddress;
     uint256 private totalDepositedAmount;
+    uint256 private totalBorrowAmount;
     uint256 public totalCollateralAmount;
-    uint256 public liquidationThreshold;
+    uint256 public liquidationThreshold = 75;
     uint256 public healthFactor;
     uint256 public interestAmount;
     uint256 public withdrawTimeStamp;
-    uint256 public loanTimeStamp;
-    uint256 public repayLoanTimeStamp;
+    uint256 public repayBorrowTimeStamp;
+    string public tokenSymbol;
+    IERC20 private token;
+
+    uint256 private constant apyLowUtilization = 100; // 1%
+    uint256 private constant apyMediumUtilization = 200; // 2%
+    uint256 private constant apyHighUtilization = 2000; // 20%
+
+    address private commissionPool = 0x63be8eA7C2966B0d6b74A4773cf532b42ecD405D;
     
-    // Constructor sets the contract owner and initializes the total deposited amount
-    constructor() payable {
-        ownerBank = msg.sender;
+    AggregatorV3Interface internal dataFeed;
+
+    constructor(string memory _tokenSymbol, address _tokenAddress) payable {
         totalDepositedAmount = msg.value;
+        tokenSymbol = _tokenSymbol;
+        tokenAddress = _tokenAddress;
+        token = ERC20(_tokenAddress);
+        dataFeed = AggregatorV3Interface(_tokenAddress);
     }
 
     // Struct representing a user transaction
-    struct Transaction {
+    struct DepositTransaction {
         uint256 amount;
-        uint256 lockTime;
         bool useAsCollateral;
         bool canWithdrawal;
         uint256 depositTimeStamp;
+        uint256 apy;
     }
 
-    mapping(address => Transaction[]) private depositTransactions; // Mapping of user addresses to their deposit transactions
-    mapping(address => uint256) public userCollateralAmount; // Mapping of user addresses to their total collateral amount
-    mapping(uint256 => address) private collateralIndexToAddress; // Mapping of collateral indices to user addresses
-    uint256 private nextCollateralIndex; // Counter for the next collateral index
-    mapping(address => uint256) public userLoanAmount; // Mapping of user addresses to their total loan amount
-    // mapping(address => Loan[]) private loans;
+    struct BorrowTransaction {
+        uint256 amount;
+        uint256 borrowTimeStamp;
+        uint256 apr;
+    }
 
-    event DepositMade(address indexed depositor, uint256 amount);
-    event LoanRepayment(address indexed borrower, uint256 repaidAmount); // Event emitted when a user repays a loan
+    mapping(address => DepositTransaction[]) private depositTransactions; // Mapping of user addresses to their deposit transactions
+    mapping(address => BorrowTransaction[]) private borrowTransactions; // Mapping of user addresses to their borrow transactions
+    mapping(address => uint256) private userCollateralAmount; // Mapping of user addresses to their total collateral amount
+    mapping(address => uint256) private userBorrowAmount; // Mapping of user addresses to their total borrow amount
+    mapping(address => uint256) private userSupplyAmount; // Mapping of user addresses to theri total supply amount
+    mapping(address => mapping (address => uint256)) private allowed;
+
+    event DepositMade(address indexed depositor, uint256 amount); // Event emmitted when a user deposit funds
+    event BorrowRepayment(address indexed borrower, uint256 repaidAmount); // Event emitted when a user repays a borrow
     event Withdrawal(address _from, uint256 amount, uint256 commission); // Event emitted when a user withdraws funds
-    event Borrow(address indexed borrower, uint256 amount); // Event emitted when a user borrows funds
-    error BorrowError(); // Error definition for borrow-related errors
+    event Loan(address indexed borrower, uint256 amount); // Event emitted when a user borrows funds
+    event Interest(uint256 interestRate, uint256 deltaTimeStamp, uint256 interestAmount);
 
-    // Modifier to restrict access to the contract owner
-    modifier onlyOwner() {
-        require(msg.sender == ownerBank, "You are not the owner");
-        _;
-    }
-
-    // Function for users to deposit funds into the contract
-    function deposit() external payable {
-        require(
-            msg.value >= 5000000 gwei,
-            "Deposit must be at least 0.005 Ether"
-        );
+    function deposit(uint256 amount) external payable {
 
         // Create a new transaction and add it to the user's transactions
-        Transaction memory newTransaction = Transaction({
-            amount: msg.value,
-            lockTime: block.timestamp + 1,
+        DepositTransaction memory newDepositTransaction = DepositTransaction({
+            amount: amount,
             useAsCollateral: true,
             canWithdrawal: true,
-            depositTimeStamp: block.timestamp // Set timestamp when depositing
+            depositTimeStamp: block.timestamp, // Set timestamp when depositing
+            apy: calculateAPY()
         });
 
-        depositTransactions[msg.sender].push(newTransaction);
-        totalDepositedAmount += msg.value;
-        totalCollateralAmount += msg.value;
-        userCollateralAmount[msg.sender] += msg.value;
+        depositTransactions[msg.sender].push(newDepositTransaction);
+        totalDepositedAmount += amount;
+        totalCollateralAmount += amount;
+        userCollateralAmount[msg.sender] += amount;
+        userSupplyAmount[msg.sender] += amount;
 
-        // liquidationThreshold = 75;
-        // healthFactor =
-        //     (userCollateralAmount[msg.sender] * liquidationThreshold) /
-        //     userLoanAmount[msg.sender];
-        // //uint256 actualHealthFactor = healthFactor / 100;
-    }
+        if (userBorrowAmount[msg.sender] == 0) {
+            healthFactor = type(uint256).max;
+        } else {
+            healthFactor = (userCollateralAmount[msg.sender] * liquidationThreshold) / userBorrowAmount[msg.sender];
+        }
+        //uint256 actualHealthFactor = healthFactor / 100;
 
-    // Function for the contract owner to increase the lock time of the latest transaction
-    function increaseLockTime(uint256 _secondsToIncrease) public onlyOwner {
-        uint256 latestTransactionIndex = depositTransactions[msg.sender]
-            .length - 1;
-        depositTransactions[msg.sender][latestTransactionIndex]
-            .lockTime += _secondsToIncrease;
+        IERC20(tokenAddress).transferFrom(msg.sender, address(this), amount);
     }
 
     // Function for users to withdraw funds from a specific transaction
-    function withdraw(uint256 index) public {
+    function withdraw(uint256 index) public payable {
         require(
             index < depositTransactions[msg.sender].length,
             "Invalid index"
         );
-        require(
-            block.timestamp > depositTransactions[msg.sender][index].lockTime,
-            "Lock time has not expired"
-        );
 
-        //interestRate * depositTransactions[msg.sender] * depositTransactions[msg.sender][index].depositTimeStamp;
+        uint256 indexAmount = depositTransactions[msg.sender][index].amount;
 
         // Calculate interest
-        uint256 interestRate = 10;
+        uint256 interestRate = calculateAPY() / 100;
         withdrawTimeStamp = block.timestamp;
         uint256 deltaTimeStamp = (withdrawTimeStamp - depositTransactions[msg.sender][index].depositTimeStamp);
-        uint256 interestRatePerSecond = (interestRate / (365 * 24 * 60 *60)) * 10000000000;
-        interestAmount = depositTransactions[msg.sender][index].amount * deltaTimeStamp * interestRatePerSecond;
+        uint256 interestRatePerSecond = 3162240000;
+        interestAmount = (indexAmount * deltaTimeStamp * interestRate) / interestRatePerSecond;
 
-        uint256 commision = (depositTransactions[msg.sender][index].amount) /
-            1000;
-        uint256 newAmount = (depositTransactions[msg.sender][index].amount -
-            commision) - interestAmount;
+        uint256 commision = (indexAmount) / 1000;
+        uint256 amountAfterCommission = (indexAmount - commision) - interestAmount;
 
         if (depositTransactions[msg.sender][index].useAsCollateral) {
-            totalCollateralAmount -= depositTransactions[msg.sender][index]
-                .amount;
-            userCollateralAmount[msg.sender] -= depositTransactions[msg.sender][
-                index
-            ].amount;
+            totalCollateralAmount -= indexAmount;
+            userCollateralAmount[msg.sender] -= indexAmount;
         }
 
-        liquidationThreshold = 75;
-        healthFactor =
-            (userCollateralAmount[msg.sender] * liquidationThreshold) /
-            userLoanAmount[msg.sender];
-        //uint256 actualHealthFactor = healthFactor / 100;
+        if (userBorrowAmount[msg.sender] == 0 && userCollateralAmount[msg.sender] != 0 ) {
+            healthFactor = type(uint256).max;
+        } else if (userBorrowAmount[msg.sender] == 0 && userCollateralAmount[msg.sender] == 0) {
+            healthFactor = 0;
+        } else {
+            healthFactor = (userCollateralAmount[msg.sender] * liquidationThreshold) / userBorrowAmount[msg.sender];
+        }
+        // //uint256 actualHealthFactor = healthFactor / 100;
 
-        payable(msg.sender).transfer(newAmount);
-        totalDepositedAmount -= depositTransactions[msg.sender][index].amount;
+        totalDepositedAmount -= indexAmount;
+        userSupplyAmount[msg.sender] -= indexAmount;
+
+        IERC20(tokenAddress).transfer(address(msg.sender), amountAfterCommission);
+        IERC20(tokenAddress).transfer(address(commissionPool), commision);
 
         require(
             depositTransactions[msg.sender][index].canWithdrawal == true,
@@ -130,8 +138,10 @@ contract BankDeposit {
         );
         depositTransactions[msg.sender][index].canWithdrawal = false;
 
-        emit Withdrawal(msg.sender, newAmount, commision);
+        emit Withdrawal(msg.sender, amountAfterCommission, commision);
+        emit Interest(interestRate, deltaTimeStamp, interestAmount);
     }
+    
 
     // Function for users to set a specific transaction as collateral or not
     function setCollateralAmount(uint256 index) public {
@@ -140,13 +150,22 @@ contract BankDeposit {
             "Index not found"
         );
 
-        Transaction storage transaction = depositTransactions[msg.sender][
-            index
-        ];
+        DepositTransaction storage transaction = depositTransactions[msg.sender][index];
 
         require(
             transaction.useAsCollateral == false,
             "You already set this transaction as a collateral"
+        );
+
+        if (userBorrowAmount[msg.sender] == 0) {
+            healthFactor = type(uint256).max;
+        } else {
+            healthFactor = (userCollateralAmount[msg.sender] * liquidationThreshold) / userBorrowAmount[msg.sender];
+        }
+
+        require(
+            healthFactor > 100,
+            "You can not cancel this collateral cause of health factor downing below 1"
         );
 
         transaction.useAsCollateral = true;
@@ -157,13 +176,14 @@ contract BankDeposit {
         }
     }
 
+
     function cancelCollateralAmount(uint256 index) public {
         require(
             index < depositTransactions[msg.sender].length,
             "Index not found"
         );
 
-        Transaction storage transaction = depositTransactions[msg.sender][
+        DepositTransaction storage transaction = depositTransactions[msg.sender][
             index
         ];
 
@@ -171,101 +191,229 @@ contract BankDeposit {
             transaction.useAsCollateral == true,
             "You have not designated this transaction as a collateral"
         );
-
+        
         transaction.useAsCollateral = false;
 
         if (transaction.useAsCollateral == false) {
             userCollateralAmount[msg.sender] -= transaction.amount;
             totalCollateralAmount -= transaction.amount;
         }
+
+        if (userBorrowAmount[msg.sender] == 0 && userCollateralAmount[msg.sender] != 0 ) {
+            healthFactor = type(uint256).max;
+        } else if (userBorrowAmount[msg.sender] == 0 && userCollateralAmount[msg.sender] == 0) {
+            healthFactor = 0;
+        } else {
+            healthFactor = (userCollateralAmount[msg.sender] * liquidationThreshold) / userBorrowAmount[msg.sender];
+        }
+
+        if (userBorrowAmount[msg.sender] != 0) {
+            require(
+            healthFactor > 100,
+            "You can not cancel this collateral cause of health factor downing below 1"
+            );
+        }
     }
 
-    // function calculateHealthFactor() public returns (uint256) {
-    //     liquidationThreshold = 75;
-
-    //     healthFactor =
-    //         (userCollateralAmount[msg.sender] * liquidationThreshold) /
-    //         userLoanAmount[msg.sender];
-    //     uint256 actualHealthFactor = healthFactor / 100;
-
-    //     require(actualHealthFactor > 1, "Health factor must be above 1");
-
-    //     return actualHealthFactor;
-    // }
 
     // Function for users to borrow funds from their collateral
-    function getLoan(uint256 loanAmount) external {
-        uint256 loanAmountInEther = loanAmount * 1 ether;
+    function getBorrow(uint256 amount) external payable  {
         require(
-            loanAmount <= userCollateralAmount[msg.sender],
-            "Loan amount exceeds collateral"
+            amount <= userCollateralAmount[msg.sender],
+            "Borrow amount exceeds collateral"
         );
 
-        // Loan memory newLoan = Loan({
-        //     borrower: msg.sender,
-        //     debtAmount: loanAmount,
-        //     // interestRate:1,
-        //     isPaid: false,
-        //     isLocked: true
-        // });
+        BorrowTransaction memory newBorrowTransaction = BorrowTransaction( {
+            amount: amount,
+            borrowTimeStamp: block.timestamp,
+            apr: calculateAPR()
+        });
 
-        // Deduct the loan amount from the user's collateral
-        totalCollateralAmount -= loanAmountInEther;
-        userCollateralAmount[msg.sender] -= loanAmountInEther;
+        borrowTransactions[msg.sender].push(newBorrowTransaction);
 
-        // Increase the user's loan amount
-        userLoanAmount[msg.sender] += loanAmountInEther;
+        // Deduct the borrow amount from the user's collateral
+        totalCollateralAmount -= amount;
+        userCollateralAmount[msg.sender] -= amount;
 
-        liquidationThreshold = 75;
-        healthFactor =
-            (userCollateralAmount[msg.sender] * liquidationThreshold) /
-            userLoanAmount[msg.sender];
+        // Increase the user's borrow amount
+        totalBorrowAmount += amount;
+        userBorrowAmount[msg.sender] += amount;
+
+        healthFactor = (userCollateralAmount[msg.sender] * liquidationThreshold) / userBorrowAmount[msg.sender];
         // uint256 actualHealthFactor = healthFactor / 100;
 
-        // Sağlık faktörü 1'den küçükse, 1 olarak ayarlanır.
-        require(healthFactor >= 100, "Health factor must be above 1");
+        // If the health factor is less than 1, the transaction is not allowed
+        require(healthFactor >= 100, "You can not borrow, your health factor must be above 1!");
 
-        payable(msg.sender).transfer(loanAmountInEther);
+        IERC20(tokenAddress).transfer(address(msg.sender), amount);
 
-        loanTimeStamp = block.timestamp;
-
-        // Emit an event for the loan
-        emit Borrow(msg.sender, loanAmount);
+        // Emit an event for the borrow
+        emit Loan(msg.sender, amount);
     }
 
-    // Function for users to repay their loan
-    function repayLoan() external payable returns (uint256) {
+
+    // Function for users to repay their borrow
+    function repayBorrow(uint256 index) external payable returns (uint256) {
         require(
-            msg.value <= userLoanAmount[msg.sender],
-            "Repayment amount exceeds outstanding loan"
+            index < borrowTransactions[msg.sender].length,
+            "Invalid index"
         );
 
-        // Update user's loan amount and total collateral
-        userLoanAmount[msg.sender] -= msg.value;
-        totalCollateralAmount += msg.value;
-        userCollateralAmount[msg.sender] += msg.value;
+        uint256 indexAmount = borrowTransactions[msg.sender][index].amount;
+
+        // Update user's borrow amount and total collateral
+        totalBorrowAmount -= indexAmount;
+        userBorrowAmount[msg.sender] -= indexAmount;
+        totalCollateralAmount += indexAmount;
+        userCollateralAmount[msg.sender] += indexAmount;
 
         // Calculate interest
-        uint256 interestRate = 8;
-        repayLoanTimeStamp = block.timestamp;
-        uint256 deltaTimeStamp = (repayLoanTimeStamp - loanTimeStamp);
-        uint256 interestRatePerSecond = (interestRate / (365 * 24 * 60 *60)) * 10000000000;
-        interestAmount = msg.value * deltaTimeStamp * interestRatePerSecond;
+        uint256 interestRate = calculateAPR() / 100;
+        repayBorrowTimeStamp = block.timestamp;
+        uint256 deltaTimeStamp = (repayBorrowTimeStamp - borrowTransactions[msg.sender][index].borrowTimeStamp);
+        uint256 interestRatePerSecond = 3162240000;
+        interestAmount = (indexAmount * deltaTimeStamp * interestRate) / interestRatePerSecond;
 
-        liquidationThreshold = 75;
-        healthFactor =
-            (userCollateralAmount[msg.sender] * liquidationThreshold) /
-            userLoanAmount[msg.sender];
+        if (userBorrowAmount[msg.sender] == 0) {
+            healthFactor = type(uint256).max;
+        } else {
+            healthFactor = (userCollateralAmount[msg.sender] * liquidationThreshold) / userBorrowAmount[msg.sender];
+        }
         //uint256 actualHealthFactor = healthFactor / 100;
 
-        // Emit an event for the loan repayment
-        emit LoanRepayment(msg.sender, msg.value);
+        IERC20(tokenAddress).transferFrom(msg.sender, address(this), indexAmount + interestAmount);
+
+        // Emit an event for the borrow repayment
+        emit BorrowRepayment(msg.sender, indexAmount);
         return interestAmount;
     }
 
-    // Function to check the user's outstanding loan amount
-    function getUserLoanAmount(address user) external view returns (uint256) {
-        return userLoanAmount[user];
+
+    function getUtilizationRate() public view returns (uint256) {
+        if (totalDepositedAmount == 0) return 0;
+        return (totalBorrowAmount * 1e18) / totalDepositedAmount; // 1e18 for precision
+    } 
+
+    function calculateAPY() public view returns (uint256) {
+        uint256 utilizationRate = getUtilizationRate();
+
+        // Low Utilization Threshold (e.g., 30%)
+        uint256 lowUtilizationThreshold = 30 * 1e16; // 30%
+
+        // Medium Utilization Threshold (e.g., 80%)
+        uint256 highUtilizationThreshold = 80 * 1e16; // 80%
+
+        if (utilizationRate < lowUtilizationThreshold) {
+            // Low utilization: Lower APY to incentivize borrowing
+            return apyLowUtilization; // e.g., 1%
+        } else if (utilizationRate < highUtilizationThreshold) {
+            // Medium utilization: Linearly increasing APY
+            uint256 slope = ((apyHighUtilization - apyMediumUtilization) * 1e18) / (highUtilizationThreshold - lowUtilizationThreshold);
+            uint256 apyIncrease = (slope * (utilizationRate - lowUtilizationThreshold)) / 1e18;
+            return apyMediumUtilization + apyIncrease; // e.g., interpolate between 2% and 19%
+        } else {
+            // High utilization: Higher APY to incentivize more deposits and discourage further borrowing
+            return apyHighUtilization; // e.g., 20% or more
+        }
+    }
+
+
+    function calculateAPR() public view returns (uint256) {
+        uint256 utilizationRate = getUtilizationRate();
+
+        // Low Utilization Threshold (e.g., 30%)
+        uint256 lowUtilizationThreshold = 30 * 1e16; // 30%
+
+        // Medium Utilization Threshold (e.g., 80%)
+        uint256 highUtilizationThreshold = 80 * 1e16; // 80%
+
+        uint256 lowLtvApr = apyLowUtilization + 400;
+        uint256 mediumLtvApr = apyMediumUtilization + 400;
+        uint256 highLtvApr = apyHighUtilization + 400;
+
+        uint256 tvl = IERC20(tokenAddress).balanceOf(address(this));
+
+        uint256 slope;
+        uint256 apyIncrease;
+
+        if (utilizationRate < lowUtilizationThreshold) {
+            // Low utilization: Lower APY to incentivize borrowing
+            if (tvl <= getTotalSupplies() * 30 / 100) {
+                return lowLtvApr; // e.g., 5%
+            }
+            return apyLowUtilization; // e.g., 1%
+        } else if (utilizationRate < highUtilizationThreshold) {
+            // Medium utilization: Linearly increasing APY
+            if (tvl <= getTotalSupplies() * 30 / 100) {
+                slope = ((highLtvApr - mediumLtvApr) * 1e18) / (highUtilizationThreshold - lowUtilizationThreshold);
+                apyIncrease = (slope * (utilizationRate - lowUtilizationThreshold)) / 1e18;
+                return mediumLtvApr + apyIncrease; // e.g., interpolate between 6% and 23%
+            }
+            slope = ((apyHighUtilization - apyMediumUtilization) * 1e18) / (highUtilizationThreshold - lowUtilizationThreshold);
+            apyIncrease = (slope * (utilizationRate - lowUtilizationThreshold)) / 1e18;
+            return apyMediumUtilization + apyIncrease; // e.g., interpolate between 2% and 19%
+        } else {
+            // High utilization: Higher APY to incentivize more deposits and discourage further borrowing
+            if (tvl <= getTotalSupplies() * 30 / 100) {
+                return highLtvApr; // e.g., 24% or more
+            }
+            return apyHighUtilization; // e.g., 20% or more
+        }
+    }
+
+
+    function getChainlinkDataFeedLatestAnswer() public view returns (int) {
+        // prettier-ignore
+        (
+            /* uint80 roundID */,
+            int answer,
+            /*uint startedAt*/,
+            /*uint timeStamp*/,
+            /*uint80 answeredInRound*/
+        ) = dataFeed.latestRoundData();
+        return answer;
+    }
+
+    
+    function getDerivedPrice(address _base, address _quote, uint8 _decimals) public view returns (int256) {
+        require(
+            _decimals > uint8(0) && _decimals <= uint8(18),
+            "Invalid _decimals"
+        );
+        int256 decimals = int256(10 ** uint256(_decimals));
+        (, int256 basePrice, , , ) = AggregatorV3Interface(_base).latestRoundData();
+        uint8 baseDecimals = AggregatorV3Interface(_base).decimals();
+        basePrice = scalePrice(basePrice, baseDecimals, _decimals);
+
+        (, int256 quotePrice, , , ) = AggregatorV3Interface(_quote).latestRoundData();
+        uint8 quoteDecimals = AggregatorV3Interface(_quote).decimals();
+        quotePrice = scalePrice(quotePrice, quoteDecimals, _decimals);
+
+        return (basePrice * decimals) / quotePrice;
+    }
+
+    function scalePrice(int256 _price, uint8 _priceDecimals, uint8 _decimals
+    ) internal pure returns (int256) {
+        if (_priceDecimals < _decimals) {
+            return _price * int256(10 ** uint256(_decimals - _priceDecimals));
+        } else if (_priceDecimals > _decimals) {
+            return _price / int256(10 ** uint256(_priceDecimals - _decimals));
+        }
+        return _price;
+    }
+
+
+    function getUserBalance(address user) public view returns (uint256) {
+        return token.balanceOf(user);
+    }
+
+    function getUserTotalSupplies(address user) external view returns (uint256) {
+        return userSupplyAmount[user];
+    }
+
+    // Function to check the user's outstanding borrow amount
+    function getUserBorrowAmount(address user) external view returns (uint256) {
+        return userBorrowAmount[user];
     }
 
     // Function to get the user's collateral amount
@@ -274,16 +422,40 @@ contract BankDeposit {
     }
 
     // Function to get the total deposited value in Ether
-    function getDepositedValue() public view returns (uint256) {
+    function getTotalSupplies() public view returns (uint256) {
         return totalDepositedAmount;
+    }
+    
+    function getTotalBorrows() public view returns (uint256) {
+        return totalBorrowAmount;
+    }
+
+    function getPoolTVL() external view returns (uint256) {
+        return IERC20(tokenAddress).balanceOf(address(this));
     }
 
     // Function to get all transactions of the calling user
-    function getAllTransactions(address user) public view returns (Transaction[] memory) {
+    function getAllDepositTransactions(address user) public view returns (DepositTransaction[] memory) {
         return depositTransactions[user];
+    }
+    function getAllBorrowTransactions(address user) public view returns (BorrowTransaction[] memory) {
+        return borrowTransactions[user];
     }
 
     function getInterestAmount() public view returns (uint256) {
         return interestAmount;
     }
+
+    function getHealthFactor() public view returns (uint256) {
+        return healthFactor;
+    }
+
+    function getTokenSymbol() public view returns(string memory) {
+        return tokenSymbol;
+    }
+
+    function getTokenAddress() public view returns(address) {
+        return tokenAddress;
+    }
+
 }

@@ -1,6 +1,6 @@
 {
 	"compiler": {
-		"version": "0.8.22+commit.4fc1097e"
+		"version": "0.8.24+commit.e11b9ed9"
 	},
 	"language": "Solidity",
 	"output": {
@@ -1308,7 +1308,7 @@
 	},
 	"settings": {
 		"compilationTarget": {
-			"Token.sol": "TestAreon"
+			"Token_tAREA.sol": "TestAreon"
 		},
 		"evmVersion": "shanghai",
 		"libraries": {},
@@ -1554,12 +1554,12 @@
 				"dweb:/ipfs/QmNvgomZYUwFAt4cZbPWAiTeSZQreGehY9BK5xyVJsUttb"
 			]
 		},
-		"Token.sol": {
-			"keccak256": "0xb1f7522b563272f251ff6a6bf1087f3b099b82d5074946a521e89813a467ae74",
+		"Token_tAREA.sol": {
+			"keccak256": "0xadb4f1c762df16e4f8df1ec5d488cf5b70e40c29e61a97a76df29f638fef1654",
 			"license": "MIT",
 			"urls": [
-				"bzz-raw://a6ecb272e2b641831ac6ea09d1190af9739f93f510c08dc460e17163dc5f02b5",
-				"dweb:/ipfs/QmR58Qff8Kj89d1jXFrvfvfRnURbnhPmmH4o2N7v1DVqjP"
+				"bzz-raw://cd26d03f8473f0878cfdf61e55459ce7d31cbd900ae16cb9f91d919372ab9fb4",
+				"dweb:/ipfs/QmVtuvJYo1sbtnrYovnWr8FK3TBtjAtmcm62NprHC8rGmp"
 			]
 		}
 	},
