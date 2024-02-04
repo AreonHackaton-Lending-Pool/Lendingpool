@@ -4,7 +4,7 @@ const Footer = () => {
         <footer className="bg-[#339ad5] text-black p-8">
             <div className="container mx-auto flex flex-col md:flex-row justify-between">
                 <div className="mb-4 md:mb-0">
-                    <h2 className="text-2xl font-bold mb-2">Süleyman Lending Pool DApp</h2>
+                    <h2 className="text-2xl font-bold mb-2">Notrino Lending Pool DApp</h2>
                     <p className="text-sm">
                         A decentralized lending platform built with Next.js and Tailwind CSS.
                     </p>
@@ -41,7 +41,7 @@ const Footer = () => {
                 </div>
             </div>
             <div className="border-t border-gray-700 mt-6 pt-4 text-center">
-                <p>&copy; 2024 Süleyman Lending Pool DApp. All rights reserved.</p>
+                <p>&copy; 2024 Notrino Lending Pool DApp. All rights reserved.</p>
             </div>
         </footer>
     );
