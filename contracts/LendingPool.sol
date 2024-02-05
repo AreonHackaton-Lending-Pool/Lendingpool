@@ -15,7 +15,7 @@ contract LendingPool {
     uint256 private totalBorrowAmount;
     uint256 public totalCollateralAmount;
     uint256 public liquidationThreshold = 75;
-    uint256 public healthFactor;
+    uint256 private healthFactor;
     uint256 public interestAmount;
     uint256 public withdrawTimeStamp;
     uint256 public repayBorrowTimeStamp;
@@ -35,22 +35,19 @@ contract LendingPool {
         tokenSymbol = _tokenSymbol;
         tokenAddress = _tokenAddress;
         token = ERC20(_tokenAddress);
-        dataFeed = AggregatorV3Interface(_tokenAddress);
+        dataFeed = AggregatorV3Interface(0xc59E3633BAAC79493d908e63626716e204A45EdF);
     }
 
     // Struct representing a user transaction
     struct DepositTransaction {
         uint256 amount;
         bool useAsCollateral;
-        bool canWithdrawal;
         uint256 depositTimeStamp;
-        uint256 apy;
     }
 
     struct BorrowTransaction {
         uint256 amount;
         uint256 borrowTimeStamp;
-        uint256 apr;
     }
 
     mapping(address => DepositTransaction[]) private depositTransactions; // Mapping of user addresses to their deposit transactions
@@ -64,7 +61,6 @@ contract LendingPool {
     event BorrowRepayment(address indexed borrower, uint256 repaidAmount); // Event emitted when a user repays a borrow
     event Withdrawal(address _from, uint256 amount, uint256 commission); // Event emitted when a user withdraws funds
     event Loan(address indexed borrower, uint256 amount); // Event emitted when a user borrows funds
-    event Interest(uint256 interestRate, uint256 deltaTimeStamp, uint256 interestAmount);
 
     function deposit(uint256 amount) external payable {
 
@@ -72,9 +68,7 @@ contract LendingPool {
         DepositTransaction memory newDepositTransaction = DepositTransaction({
             amount: amount,
             useAsCollateral: true,
-            canWithdrawal: true,
-            depositTimeStamp: block.timestamp, // Set timestamp when depositing
-            apy: calculateAPY()
+            depositTimeStamp: block.timestamp // Set timestamp when depositing
         });
 
         depositTransactions[msg.sender].push(newDepositTransaction);
@@ -97,7 +91,7 @@ contract LendingPool {
     function withdraw(uint256 index) public payable {
         require(
             index < depositTransactions[msg.sender].length,
-            "Invalid index"
+            "No such transaction found"
         );
 
         uint256 indexAmount = depositTransactions[msg.sender][index].amount;
@@ -131,15 +125,14 @@ contract LendingPool {
 
         IERC20(tokenAddress).transfer(address(msg.sender), amountAfterCommission);
         IERC20(tokenAddress).transfer(address(commissionPool), commision);
-
-        require(
-            depositTransactions[msg.sender][index].canWithdrawal == true,
-            "You already withdrawn this transaction"
-        );
-        depositTransactions[msg.sender][index].canWithdrawal = false;
+        
+        // Move the last element to the deleted position and pop the last element
+        if (index < depositTransactions[msg.sender].length - 1) {
+            depositTransactions[msg.sender][index] = depositTransactions[msg.sender][depositTransactions[msg.sender].length - 1];
+        }
+        depositTransactions[msg.sender].pop();
 
         emit Withdrawal(msg.sender, amountAfterCommission, commision);
-        emit Interest(interestRate, deltaTimeStamp, interestAmount);
     }
     
 
@@ -216,6 +209,76 @@ contract LendingPool {
     }
 
 
+    function getUtilizationRate() public view returns (uint256) {
+        if (totalDepositedAmount == 0) return 0;
+        return (totalBorrowAmount * 1e18) / totalDepositedAmount; // 1e18 for precision
+    } 
+
+    function calculateAPY() public view returns (uint256) {
+        uint256 utilizationRate = getUtilizationRate();
+
+        // Low Utilization Threshold (e.g., 30%)
+        uint256 lowUtilizationThreshold = 30 * 1e16; // 30%
+
+        // Medium Utilization Threshold (e.g., 80%)
+        uint256 highUtilizationThreshold = 80 * 1e16; // 80%
+
+        if (utilizationRate < lowUtilizationThreshold) {
+            // Low utilization: Lower APY to incentivize borrowing
+            return apyLowUtilization; // e.g., 1%
+        } else if (utilizationRate < highUtilizationThreshold) {
+            // Medium utilization: Linearly increasing APY
+            uint256 slope = ((apyHighUtilization - apyMediumUtilization) * 1e18) / (highUtilizationThreshold - lowUtilizationThreshold);
+            uint256 apyIncrease = (slope * (utilizationRate - lowUtilizationThreshold)) / 1e18;
+            return apyMediumUtilization + apyIncrease; // e.g., interpolate between 2% and 19%
+        } else {
+            // High utilization: Higher APY to incentivize more deposits and discourage further borrowing
+            return apyHighUtilization; // e.g., 20% or more
+        }
+    }
+
+    function calculateAPR() public view returns (uint256) {
+        uint256 utilizationRate = getUtilizationRate();
+
+        // Low Utilization Threshold (e.g., 30%)
+        uint256 lowUtilizationThreshold = 30 * 1e16; // 30%
+
+        // Medium Utilization Threshold (e.g., 80%)
+        uint256 highUtilizationThreshold = 80 * 1e16; // 80%
+
+        uint256 lowLtvApr = apyLowUtilization + 400;
+        uint256 mediumLtvApr = apyMediumUtilization + 400;
+        uint256 highLtvApr = apyHighUtilization + 400;
+
+        uint256 slope;
+        uint256 apyIncrease;
+
+        if (utilizationRate < lowUtilizationThreshold) {
+            // Low utilization: Lower APY to incentivize borrowing
+            if (getPoolTVL() <= getTotalSupplies() * 30 / 100) {
+                return lowLtvApr; // e.g., 5%
+            }
+            return apyLowUtilization; // e.g., 1%
+        } else if (utilizationRate < highUtilizationThreshold) {
+            // Medium utilization: Linearly increasing APY
+            if (getPoolTVL() <= getTotalSupplies() * 30 / 100) {
+                slope = ((highLtvApr - mediumLtvApr) * 1e18) / (highUtilizationThreshold - lowUtilizationThreshold);
+                apyIncrease = (slope * (utilizationRate - lowUtilizationThreshold)) / 1e18;
+                return mediumLtvApr + apyIncrease; // e.g., interpolate between 6% and 23%
+            }
+            slope = ((apyHighUtilization - apyMediumUtilization) * 1e18) / (highUtilizationThreshold - lowUtilizationThreshold);
+            apyIncrease = (slope * (utilizationRate - lowUtilizationThreshold)) / 1e18;
+            return apyMediumUtilization + apyIncrease; // e.g., interpolate between 2% and 19%
+        } else {
+            // High utilization: Higher APY to incentivize more deposits and discourage further borrowing
+            if (getPoolTVL() <= getTotalSupplies() * 30 / 100) {
+                return highLtvApr; // e.g., 24% or more
+            }
+            return apyHighUtilization; // e.g., 20% or more
+        }
+    }
+
+
     // Function for users to borrow funds from their collateral
     function getBorrow(uint256 amount) external payable  {
         require(
@@ -225,8 +288,7 @@ contract LendingPool {
 
         BorrowTransaction memory newBorrowTransaction = BorrowTransaction( {
             amount: amount,
-            borrowTimeStamp: block.timestamp,
-            apr: calculateAPR()
+            borrowTimeStamp: block.timestamp
         });
 
         borrowTransactions[msg.sender].push(newBorrowTransaction);
@@ -243,7 +305,7 @@ contract LendingPool {
         // uint256 actualHealthFactor = healthFactor / 100;
 
         // If the health factor is less than 1, the transaction is not allowed
-        require(healthFactor >= 100, "You can not borrow, your health factor must be above 1!");
+        require(healthFactor > 100, "You can not borrow, your health factor must be above 1!");
 
         IERC20(tokenAddress).transfer(address(msg.sender), amount);
 
@@ -253,7 +315,7 @@ contract LendingPool {
 
 
     // Function for users to repay their borrow
-    function repayBorrow(uint256 index) external payable returns (uint256) {
+    function repayBorrow(uint256 index) public payable {
         require(
             index < borrowTransactions[msg.sender].length,
             "Invalid index"
@@ -283,82 +345,14 @@ contract LendingPool {
 
         IERC20(tokenAddress).transferFrom(msg.sender, address(this), indexAmount + interestAmount);
 
+        // Move the last element to the deleted position and pop the last element
+        if (index < borrowTransactions[msg.sender].length - 1) {
+            borrowTransactions[msg.sender][index] = borrowTransactions[msg.sender][borrowTransactions[msg.sender].length - 1];
+        }
+        borrowTransactions[msg.sender].pop();
+
         // Emit an event for the borrow repayment
         emit BorrowRepayment(msg.sender, indexAmount);
-        return interestAmount;
-    }
-
-
-    function getUtilizationRate() public view returns (uint256) {
-        if (totalDepositedAmount == 0) return 0;
-        return (totalBorrowAmount * 1e18) / totalDepositedAmount; // 1e18 for precision
-    } 
-
-    function calculateAPY() public view returns (uint256) {
-        uint256 utilizationRate = getUtilizationRate();
-
-        // Low Utilization Threshold (e.g., 30%)
-        uint256 lowUtilizationThreshold = 30 * 1e16; // 30%
-
-        // Medium Utilization Threshold (e.g., 80%)
-        uint256 highUtilizationThreshold = 80 * 1e16; // 80%
-
-        if (utilizationRate < lowUtilizationThreshold) {
-            // Low utilization: Lower APY to incentivize borrowing
-            return apyLowUtilization; // e.g., 1%
-        } else if (utilizationRate < highUtilizationThreshold) {
-            // Medium utilization: Linearly increasing APY
-            uint256 slope = ((apyHighUtilization - apyMediumUtilization) * 1e18) / (highUtilizationThreshold - lowUtilizationThreshold);
-            uint256 apyIncrease = (slope * (utilizationRate - lowUtilizationThreshold)) / 1e18;
-            return apyMediumUtilization + apyIncrease; // e.g., interpolate between 2% and 19%
-        } else {
-            // High utilization: Higher APY to incentivize more deposits and discourage further borrowing
-            return apyHighUtilization; // e.g., 20% or more
-        }
-    }
-
-
-    function calculateAPR() public view returns (uint256) {
-        uint256 utilizationRate = getUtilizationRate();
-
-        // Low Utilization Threshold (e.g., 30%)
-        uint256 lowUtilizationThreshold = 30 * 1e16; // 30%
-
-        // Medium Utilization Threshold (e.g., 80%)
-        uint256 highUtilizationThreshold = 80 * 1e16; // 80%
-
-        uint256 lowLtvApr = apyLowUtilization + 400;
-        uint256 mediumLtvApr = apyMediumUtilization + 400;
-        uint256 highLtvApr = apyHighUtilization + 400;
-
-        uint256 tvl = IERC20(tokenAddress).balanceOf(address(this));
-
-        uint256 slope;
-        uint256 apyIncrease;
-
-        if (utilizationRate < lowUtilizationThreshold) {
-            // Low utilization: Lower APY to incentivize borrowing
-            if (tvl <= getTotalSupplies() * 30 / 100) {
-                return lowLtvApr; // e.g., 5%
-            }
-            return apyLowUtilization; // e.g., 1%
-        } else if (utilizationRate < highUtilizationThreshold) {
-            // Medium utilization: Linearly increasing APY
-            if (tvl <= getTotalSupplies() * 30 / 100) {
-                slope = ((highLtvApr - mediumLtvApr) * 1e18) / (highUtilizationThreshold - lowUtilizationThreshold);
-                apyIncrease = (slope * (utilizationRate - lowUtilizationThreshold)) / 1e18;
-                return mediumLtvApr + apyIncrease; // e.g., interpolate between 6% and 23%
-            }
-            slope = ((apyHighUtilization - apyMediumUtilization) * 1e18) / (highUtilizationThreshold - lowUtilizationThreshold);
-            apyIncrease = (slope * (utilizationRate - lowUtilizationThreshold)) / 1e18;
-            return apyMediumUtilization + apyIncrease; // e.g., interpolate between 2% and 19%
-        } else {
-            // High utilization: Higher APY to incentivize more deposits and discourage further borrowing
-            if (tvl <= getTotalSupplies() * 30 / 100) {
-                return highLtvApr; // e.g., 24% or more
-            }
-            return apyHighUtilization; // e.g., 20% or more
-        }
     }
 
 
@@ -392,8 +386,7 @@ contract LendingPool {
         return (basePrice * decimals) / quotePrice;
     }
 
-    function scalePrice(int256 _price, uint8 _priceDecimals, uint8 _decimals
-    ) internal pure returns (int256) {
+    function scalePrice(int256 _price, uint8 _priceDecimals, uint8 _decimals) internal pure returns (int256) {
         if (_priceDecimals < _decimals) {
             return _price * int256(10 ** uint256(_decimals - _priceDecimals));
         } else if (_priceDecimals > _decimals) {
@@ -407,12 +400,12 @@ contract LendingPool {
         return token.balanceOf(user);
     }
 
-    function getUserTotalSupplies(address user) external view returns (uint256) {
+    function getUserTotalSupplies(address user) public view returns (uint256) {
         return userSupplyAmount[user];
     }
 
     // Function to check the user's outstanding borrow amount
-    function getUserBorrowAmount(address user) external view returns (uint256) {
+    function getUserBorrowAmount(address user) public view returns (uint256) {
         return userBorrowAmount[user];
     }
 
@@ -430,7 +423,7 @@ contract LendingPool {
         return totalBorrowAmount;
     }
 
-    function getPoolTVL() external view returns (uint256) {
+    function getPoolTVL() public view returns (uint256) {
         return IERC20(tokenAddress).balanceOf(address(this));
     }
 

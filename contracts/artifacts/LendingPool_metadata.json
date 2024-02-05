@@ -63,31 +63,6 @@
 				"anonymous": false,
 				"inputs": [
 					{
-						"indexed": false,
-						"internalType": "uint256",
-						"name": "interestRate",
-						"type": "uint256"
-					},
-					{
-						"indexed": false,
-						"internalType": "uint256",
-						"name": "deltaTimeStamp",
-						"type": "uint256"
-					},
-					{
-						"indexed": false,
-						"internalType": "uint256",
-						"name": "interestAmount",
-						"type": "uint256"
-					}
-				],
-				"name": "Interest",
-				"type": "event"
-			},
-			{
-				"anonymous": false,
-				"inputs": [
-					{
 						"indexed": true,
 						"internalType": "address",
 						"name": "borrower",
@@ -201,11 +176,6 @@
 								"internalType": "uint256",
 								"name": "borrowTimeStamp",
 								"type": "uint256"
-							},
-							{
-								"internalType": "uint256",
-								"name": "apr",
-								"type": "uint256"
 							}
 						],
 						"internalType": "struct LendingPool.BorrowTransaction[]",
@@ -239,18 +209,8 @@
 								"type": "bool"
 							},
 							{
-								"internalType": "bool",
-								"name": "canWithdrawal",
-								"type": "bool"
-							},
-							{
 								"internalType": "uint256",
 								"name": "depositTimeStamp",
-								"type": "uint256"
-							},
-							{
-								"internalType": "uint256",
-								"name": "apy",
 								"type": "uint256"
 							}
 						],
@@ -499,19 +459,6 @@
 			},
 			{
 				"inputs": [],
-				"name": "healthFactor",
-				"outputs": [
-					{
-						"internalType": "uint256",
-						"name": "",
-						"type": "uint256"
-					}
-				],
-				"stateMutability": "view",
-				"type": "function"
-			},
-			{
-				"inputs": [],
 				"name": "interestAmount",
 				"outputs": [
 					{
@@ -545,13 +492,7 @@
 					}
 				],
 				"name": "repayBorrow",
-				"outputs": [
-					{
-						"internalType": "uint256",
-						"name": "",
-						"type": "uint256"
-					}
-				],
+				"outputs": [],
 				"stateMutability": "payable",
 				"type": "function"
 			},
@@ -763,11 +704,11 @@
 			]
 		},
 		"LendingPool.sol": {
-			"keccak256": "0x87deba690ff940cf6b423847da2a4f41764a3ec8a3c30bf3b02b2a2f4d60aa65",
+			"keccak256": "0x744a2a039b18cae0b8a29776c05f3a4d0b71c2156102a330a7160b47ff26ee7a",
 			"license": "MIT",
 			"urls": [
-				"bzz-raw://ae1c29093f5060d9e79c4f65db188c5b00ce8124ff9a87b307b44950bb90a0b1",
-				"dweb:/ipfs/QmfLRmg1xnrGDW9P9KkoRuQL7VpkiWzHHxwwjHo9cyyPu5"
+				"bzz-raw://7c1fc2f871e1332dca0fecfe5af9d4f5b2a2bfd3700a71b5b77f9cccce912238",
+				"dweb:/ipfs/QmagyKdVcErUp2S6vnt51PjAiRnXPRcQDEJRFniNLC5BgM"
 			]
 		}
 	},
